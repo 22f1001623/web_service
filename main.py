@@ -8,7 +8,7 @@ from pydantic import BaseModel
 app = FastAPI()
 
 ALLOWED_ORIGIN = "https://dash-xfs84l.example.com"
-MY_EMAIL = "22f1001623@ds.study.iitm.ac.in"  # <-- Replace with your actual email
+MY_EMAIL = "22f1001623@ds.study.iitm.ac.in"
 
 class StatsResponse(BaseModel):
     email: str
@@ -19,51 +19,52 @@ class StatsResponse(BaseModel):
     mean: float
 
 @app.middleware("http")
-async def process_time_and_cors_middleware(request: Request, call_next):
+async def strict_cors_and_metrics_middleware(request: Request, call_next):
     start_time = time.perf_counter()
     request_id = str(uuid.uuid4())
     
-    # 1. Handle Preflight (OPTIONS) Requests Manually for Strict CORS
+    # Extract incoming Origin safely
+    origin = request.headers.get("origin") or request.headers.get("Origin")
+
+    # 1. Handle Preflight (OPTIONS) Requests cleanly
     if request.method == "OPTIONS":
-        origin = request.headers.get("Origin")
         response = Response(status_code=200)
-        
         if origin == ALLOWED_ORIGIN:
             response.headers["Access-Control-Allow-Origin"] = ALLOWED_ORIGIN
             response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
             response.headers["Access-Control-Allow-Headers"] = "*"
+            response.headers["Access-Control-Max-Age"] = "86400"
         
-        # Add required custom headers even to preflight
-        process_time = time.perf_counter() - start_time
+        # Add required custom tracking headers
         response.headers["X-Request-ID"] = request_id
-        response.headers["X-Process-Time"] = f"{process_time:.6f}"
+        response.headers["X-Process-Time"] = f"{time.perf_counter() - start_time:.6f}"
         return response
 
-    # 2. Handle Actual Requests (GET, etc.)
-    response = await call_next(request)
-    
-    # Enforce strict CORS on the response
-    origin = request.headers.get("Origin")
+    # 2. Handle Actual Processing Requests (GET)
+    try:
+        response = await call_next(request)
+    except Exception:
+        response = JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
+    # Apply strict CORS matching logic on runtime responses
     if origin == ALLOWED_ORIGIN:
         response.headers["Access-Control-Allow-Origin"] = ALLOWED_ORIGIN
 
-    # Inject required custom middleware headers
-    process_time = time.perf_counter() - start_time
+    # Inject required application performance metrics
     response.headers["X-Request-ID"] = request_id
-    response.headers["X-Process-Time"] = f"{process_time:.6f}"
+    response.headers["X-Process-Time"] = f"{time.perf_counter() - start_time:.6f}"
     
     return response
 
 @app.get("/stats", response_model=StatsResponse)
 async def get_stats(values: str = Query(..., description="Comma-separated integers")):
     try:
-        # Parse the comma-separated integer string
-        int_values: List[int] = [int(x.strip()) for x in values.split(",") if x.strip()]
+        raw_list = [x.strip() for x in values.split(",") if x.strip()]
+        if not raw_list:
+            return JSONResponse(status_code=400, content={"detail": "Empty values list"})
+            
+        int_values: List[int] = [int(x) for x in raw_list]
         
-        if not int_values:
-            return JSONResponse(status_code=400, content={"detail": "No valid integers provided"})
-        
-        # Compute metrics
         count_val = len(int_values)
         sum_val = sum(int_values)
         min_val = min(int_values)
@@ -79,4 +80,4 @@ async def get_stats(values: str = Query(..., description="Comma-separated intege
             mean=round(mean_val, 4)
         )
     except ValueError:
-        return JSONResponse(status_code=400, content={"detail": "Invalid integer format in values parameter"})
+        return JSONResponse(status_code=400, content={"detail": "Invalid integer format"})
