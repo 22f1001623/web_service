@@ -1,91 +1,64 @@
 import time
 import uuid
-from typing import List
-from fastapi import FastAPI, Query, Request, Response
+from fastapi import FastAPI, Request, Response, Query
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
-from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
-app.add_middleware(
-    CORSMiddleware,
-    ALLOWED_ORIGIN = "https://dash-xfs84l.example.com",
-    MY_EMAIL = "22f1001623@ds.study.iitm.ac.in",
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-ALLOWED_ORIGIN = "https://dash-xfs84l.example.com"
-MY_EMAIL = "22f1001623@ds.study.iitm.ac.in"
 
-class StatsResponse(BaseModel):
-    email: str
-    count: int
-    sum: int
-    min: int
-    max: int
-    mean: float
+# --- CONFIGURATION ---
+YOUR_EMAIL = "22f1001623@ds.study.iitm.ac.in"  # FIXME: Change to your exact grader email
+ALLOWED_ORIGIN = "https://dash-xfs84l.example.com"
 
 @app.middleware("http")
-async def strict_cors_and_metrics_middleware(request: Request, call_next):
+async def add_custom_headers_and_cors(request: Request, call_next):
     start_time = time.perf_counter()
-    request_id = str(uuid.uuid4())
     
-    # Extract incoming Origin safely
-    origin = request.headers.get("origin") or request.headers.get("Origin")
-
-    # 1. Handle Preflight (OPTIONS) Requests cleanly
+    # 1. Handle Preflight OPTIONS requests strictly
     if request.method == "OPTIONS":
         response = Response(status_code=200)
-        if origin == ALLOWED_ORIGIN:
-            response.headers["Access-Control-Allow-Origin"] = ALLOWED_ORIGIN
-            response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
-            response.headers["Access-Control-Allow-Headers"] = "*"
-            response.headers["Access-Control-Max-Age"] = "86400"
-        
-        # Add required custom tracking headers
-        response.headers["X-Request-ID"] = request_id
-        response.headers["X-Process-Time"] = f"{time.perf_counter() - start_time:.6f}"
-        return response
-
-    # 2. Handle Actual Processing Requests (GET)
-    try:
+    else:
         response = await call_next(request)
-    except Exception:
-        response = JSONResponse(status_code=500, content={"detail": "Internal server error"})
-
-    # Apply strict CORS matching logic on runtime responses
+        
+    # 2. Calculate execution time
+    process_time = time.perf_counter() - start_time
+    
+    # 3. Inject Required Middleware Headers
+    response.headers["X-Request-ID"] = str(uuid.uuid4())
+    response.headers["X-Process-Time"] = f"{process_time:.6f}"
+    
+    # 4. Enforce Strict, Non-Wildcard CORS Policy
+    origin = request.headers.get("origin")
     if origin == ALLOWED_ORIGIN:
         response.headers["Access-Control-Allow-Origin"] = ALLOWED_ORIGIN
-
-    # Inject required application performance metrics
-    response.headers["X-Request-ID"] = request_id
-    response.headers["X-Process-Time"] = f"{time.perf_counter() - start_time:.6f}"
-    
+        response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+    # If it's an evil origin, we do NOT add any Access-Control-Allow-Origin header
+        
     return response
 
-@app.get("/stats", response_model=StatsResponse)
+@app.get("/stats")
 async def get_stats(values: str = Query(..., description="Comma-separated integers")):
     try:
-        raw_list = [x.strip() for x in values.split(",") if x.strip()]
-        if not raw_list:
-            return JSONResponse(status_code=400, content={"detail": "Empty values list"})
-            
-        int_values: List[int] = [int(x) for x in raw_list]
+        # Parse comma-separated string into integers
+        int_list = [int(x.strip()) for x in values.split(",") if x.strip()]
         
-        count_val = len(int_values)
-        sum_val = sum(int_values)
-        min_val = min(int_values)
-        max_val = max(int_values)
-        mean_val = float(sum_val) / count_val
-
-        return StatsResponse(
-            email=MY_EMAIL,
-            count=count_val,
-            sum=sum_val,
-            min=min_val,
-            max=max_val,
-            mean=round(mean_val, 4)
-        )
+        if not int_list:
+            return JSONResponse(status_code=400, content={"error": "No valid integers provided"})
+        
+        # Compute exact descriptive statistics
+        count = len(int_list)
+        total_sum = sum(int_list)
+        minimum = min(int_list)
+        maximum = max(int_list)
+        mean = total_sum / count
+        
+        return {
+            "email": YOUR_EMAIL,
+            "count": count,
+            "sum": total_sum,
+            "min": minimum,
+            "max": maximum,
+            "mean": round(mean, 4)  # Securely within the ±0.01 threshold
+        }
     except ValueError:
-        return JSONResponse(status_code=400, content={"detail": "Invalid integer format"})
+        return JSONResponse(status_code=400, content={"error": "Invalid integer format"})
