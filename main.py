@@ -7,8 +7,8 @@ from pydantic import BaseModel
 app = FastAPI()
 
 # Configuration
-ALLOWED_ORIGIN = "https://example.com"
-YOUR_EMAIL = "your-email@example.com"  # FIXME: Double check this is your correct logged-in email
+ALLOWED_ORIGIN = "https://dash-xfs84l.example.com"
+YOUR_EMAIL = "22f1001623@ds.study.iitm.ac.in"  # FIXME: Double check this is your correct logged-in email
 
 class StatsResponse(BaseModel):
     email: str
